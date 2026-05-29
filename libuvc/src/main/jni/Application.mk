@@ -26,9 +26,8 @@
 # Note: Supporting GCC on NDK is already deprecated and GCC will be removed from NDK soon.
 #NDK_TOOLCHAIN_VERSION := 4.9
 
-APP_PLATFORM := android-14
-#APP_ABI :=arm64-v8a armeabi-v7a
-# /*if you want x86 or x86_64, please open it*/
-APP_ABI :=arm64-v8a armeabi-v7a x86 x86_64
+APP_PLATFORM := android-21
+# 与 app 模块 abiFilters 一致；在 Apple Silicon Mac 上构建 x86 会因 yasm 二进制不兼容而失败
+APP_ABI := arm64-v8a armeabi-v7a
 #APP_OPTIM := debug
 APP_OPTIM := release

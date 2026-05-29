@@ -3,6 +3,7 @@ apply plugin: 'com.android.library'
 import org.apache.tools.ant.taskdefs.condition.Os
 
 android {
+	namespace 'com.jiangdg.uvccamera'
 	compileSdkVersion rootProject.ext.versionCompiler
 	buildToolsVersion rootProject.ext.versionBuildTool
 
@@ -16,12 +17,9 @@ android {
 		targetSdkVersion rootProject.ext.versionTarget
     }
 
-	lintOptions {
+	lint {
 		checkReleaseBuilds false
-		// Or, if you prefer, you can continue to check for errors in release builds,
-		// but continue the build even when errors are found:
 		abortOnError false
-		// The demo app does not have translations.
 		disable 'MissingTranslation'
 	}
 
@@ -43,6 +41,10 @@ String getNdkBuildPath() {
 		Properties properties = new Properties()
 		properties.load(project.rootProject.file('local.properties').newDataInputStream())
 		ndkBuildingDir = properties.getProperty("ndk.dir")
+		if (ndkBuildingDir == null || ndkBuildingDir.isEmpty()) {
+			def sdkDir = properties.getProperty("sdk.dir")
+			ndkBuildingDir = "${sdkDir}/ndk/${rootProject.ext.ndkVersion}"
+		}
 	}
 	def ndkBuildPath = ndkBuildingDir
 	if (Os.isFamily(Os.FAMILY_WINDOWS)) {

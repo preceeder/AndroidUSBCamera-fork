@@ -4,7 +4,9 @@ plugins {
 }
 
 android {
+    namespace 'com.jiangdg.natives'
     compileSdkVersion 31
+    ndkVersion "26.1.10909125"
 
     defaultConfig {
         minSdkVersion 19
@@ -33,7 +35,7 @@ android {
     externalNativeBuild {
         cmake {
             path "src/main/cpp/CMakeLists.txt"
-            version "3.10.2"
+            version "3.22.1"
         }
     }
     compileOptions {
