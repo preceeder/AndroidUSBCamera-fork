@@ -35,7 +35,13 @@ class CameraRequest private constructor() {
     var defaultEffect: AbstractEffect? = null
     var defaultRotateType: RotateType = RotateType.ANGLE_0
     var audioSource: AudioSource = AudioSource.SOURCE_AUTO
-    var previewFormat: PreviewFormat = PreviewFormat.FORMAT_MJPEG
+    var previewMinFps: Int = DEFAULT_MIN_FPS
+    var previewMaxFps: Int = DEFAULT_MAX_FPS
+    /**
+     * libuvc quirks for this camera. null = auto (MTK workarounds only when another UVC
+     * preview is already active); 0 = disabled; [com.jiangdg.uvc.UVCCamera.UVC_QUIRK_FIX_BANDWIDTH] for problematic devices.
+     */
+    var uvcQuirks: Int? = null
 
     @kotlin.Deprecated("Deprecated since version 3.3.0")
     var cameraId: String = ""
@@ -178,13 +184,23 @@ class CameraRequest private constructor() {
         }
 
         /**
-         * Set preview format
+         * Set preview frame rate range (passed to UVCCamera.setPreviewSize).
          *
-         * @param format preview format, default is [PreviewFormat.FORMAT_MJPEG]
-         * @return see [Builder]
+         * @param minFps minimum fps, inclusive
+         * @param maxFps maximum fps, inclusive
          */
-        fun setPreviewFormat(format: PreviewFormat): Builder {
-            mRequest.previewFormat = format
+        fun setPreviewFps(minFps: Int, maxFps: Int): Builder {
+            mRequest.previewMinFps = minFps
+            mRequest.previewMaxFps = maxFps
+            return this
+        }
+
+        /**
+         * Set libuvc quirks for this camera. Use [com.jiangdg.uvc.UVCCamera.UVC_QUIRK_FIX_BANDWIDTH]
+         * when a specific camera fails to preview on MTK; leave unset for default auto behavior.
+         */
+        fun setUvcQuirks(quirks: Int): Builder {
+            mRequest.uvcQuirks = quirks
             return this
         }
 
@@ -225,19 +241,10 @@ class CameraRequest private constructor() {
         SOURCE_AUTO
     }
 
-    /**
-     * Preview format
-     *
-     * FORMAT_MJPEG: default format with high frame rate
-     * FORMAT_YUYV: yuv format with lower frame rate
-     */
-    enum class PreviewFormat {
-        FORMAT_MJPEG,
-        FORMAT_YUYV
-    }
-
     companion object {
         private const val DEFAULT_WIDTH = 640
         private const val DEFAULT_HEIGHT = 480
+        private const val DEFAULT_MIN_FPS = 10
+        private const val DEFAULT_MAX_FPS = 60
     }
 }

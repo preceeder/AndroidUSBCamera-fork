@@ -667,22 +667,34 @@ class DemoFragment : CameraFragment(), View.OnClickListener, CaptureMediaView.On
                 } else {
                     MediaUtils.findRecentMedia(requireContext())
                 }?.also { path ->
-                    val size = Utils.dp2px(requireContext(), 38F)
-                    ImageLoaders.of(this@DemoFragment)
-                        .loadAsBitmap(path, size, size, object : ILoader.OnLoadedResultListener {
-                            override fun onLoadedSuccess(bitmap: Bitmap?) {
-                                lifecycleScope.launch(Dispatchers.Main) {
-                                    mViewBinding.albumPreviewIv.canShowImageBorder = true
-                                    mViewBinding.albumPreviewIv.setImageBitmap(bitmap)
-                                }
+                    if (MediaUtils.isVideoPath(path)) {
+                        val bitmap = MediaUtils.getVideoThumbnail(path)
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            if (bitmap != null) {
+                                mViewBinding.albumPreviewIv.canShowImageBorder = true
+                                mViewBinding.albumPreviewIv.setImageBitmap(bitmap)
+                            } else {
+                                mViewBinding.albumPreviewIv.cancelAnimation()
                             }
+                        }
+                    } else {
+                        val size = Utils.dp2px(requireContext(), 38F)
+                        ImageLoaders.of(this@DemoFragment)
+                            .loadAsBitmap(path, size, size, object : ILoader.OnLoadedResultListener {
+                                override fun onLoadedSuccess(bitmap: Bitmap?) {
+                                    lifecycleScope.launch(Dispatchers.Main) {
+                                        mViewBinding.albumPreviewIv.canShowImageBorder = true
+                                        mViewBinding.albumPreviewIv.setImageBitmap(bitmap)
+                                    }
+                                }
 
-                            override fun onLoadedFailed(error: Exception?) {
-                                lifecycleScope.launch(Dispatchers.Main) {
-                                    mViewBinding.albumPreviewIv.cancelAnimation()
+                                override fun onLoadedFailed(error: Exception?) {
+                                    lifecycleScope.launch(Dispatchers.Main) {
+                                        mViewBinding.albumPreviewIv.cancelAnimation()
+                                    }
                                 }
-                            }
-                        })
+                            })
+                    }
                 }
             } catch (e: Exception) {
                 activity?.runOnUiThread {

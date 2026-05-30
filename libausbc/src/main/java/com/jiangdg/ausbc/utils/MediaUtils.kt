@@ -16,9 +16,11 @@
 package com.jiangdg.ausbc.utils
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -76,6 +78,30 @@ object MediaUtils {
             Logger.e(TAG, "close raw file failed!", e)
         }
         return sb.toString()
+    }
+
+    /**
+     * Extract first keyframe thumbnail from a local mp4 (for album preview).
+     */
+    fun getVideoThumbnail(path: String): Bitmap? {
+        var mmr: MediaMetadataRetriever? = null
+        return try {
+            mmr = MediaMetadataRetriever()
+            mmr.setDataSource(path)
+            mmr.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+        } catch (e: Exception) {
+            Logger.e(TAG, "getVideoThumbnail failed: ${e.message}")
+            null
+        } finally {
+            try {
+                mmr?.release()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun isVideoPath(path: String?): Boolean {
+        return path?.endsWith(".mp4", ignoreCase = true) == true
     }
 
     fun findRecentMedia(context: Context): String? {

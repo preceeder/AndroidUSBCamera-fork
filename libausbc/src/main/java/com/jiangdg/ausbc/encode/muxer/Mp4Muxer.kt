@@ -164,6 +164,9 @@ class Mp4Muxer(
             if (bufferInfo.size <= 0) {
                 return
             }
+            if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                return
+            }
             val index = if (isVideo) {
                 if (mVideoPts == 0L) {
                     mVideoPts = bufferInfo.presentationTimeUs
@@ -222,11 +225,24 @@ class Mp4Muxer(
      */
     @Synchronized
     fun release() {
+        val savedPath = path
         try {
-            mMediaMuxer?.stop()
+            if (isMuxerStarter()) {
+                mMediaMuxer?.stop()
+            }
             mMediaMuxer?.release()
-            insertDCIM(mContext, path, true)
-            Logger.i(TAG, "stop media muxer")
+            if (isValidVideoFile(savedPath)) {
+                insertDCIM(mContext, savedPath, true)
+                Logger.i(TAG, "stop media muxer, path=$savedPath")
+            } else {
+                savedPath?.let { p ->
+                    File(p).takeIf { it.exists() }?.delete()
+                }
+                mMainHandler.post {
+                    mCaptureCallBack?.onError("video save failed: invalid or empty file")
+                }
+                Logger.e(TAG, "release: invalid mp4, path=$savedPath")
+            }
         } catch (e: Exception) {
             mMainHandler.post {
                 mCaptureCallBack?.onError(e.localizedMessage)
@@ -279,13 +295,44 @@ class Mp4Muxer(
     fun isMuxerStarter() = mVideoTrackerIndex != -1 && (mAudioTrackerIndex != -1 || isVideoOnly)
 
     private fun getLocalVideoDuration(filePath: String?): Long {
+        var mmr: MediaMetadataRetriever? = null
         return try {
-            val mmr = MediaMetadataRetriever()
+            mmr = MediaMetadataRetriever()
             mmr.setDataSource(filePath)
-            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?:0L
+            mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L
         } catch (e: Exception) {
             e.printStackTrace()
             0L
+        } finally {
+            try {
+                mmr?.release()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun isValidVideoFile(filePath: String?): Boolean {
+        if (filePath.isNullOrEmpty()) {
+            return false
+        }
+        val file = File(filePath)
+        if (!file.exists() || file.length() < 512) {
+            return false
+        }
+        var mmr: MediaMetadataRetriever? = null
+        return try {
+            mmr = MediaMetadataRetriever()
+            mmr.setDataSource(filePath)
+            val duration = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            duration > 0
+        } catch (e: Exception) {
+            Logger.e(TAG, "isValidVideoFile failed: ${e.message}")
+            false
+        } finally {
+            try {
+                mmr?.release()
+            } catch (_: Exception) {
+            }
         }
     }
 

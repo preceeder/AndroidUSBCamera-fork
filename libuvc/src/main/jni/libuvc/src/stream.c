@@ -159,6 +159,90 @@ static enum uvc_frame_format uvc_frame_format_for_guid(uint8_t guid[16]) {
 	return UVC_FRAME_FORMAT_UNKNOWN;
 }
 
+static void uvc_fixup_video_ctrl(uvc_device_handle_t *devh,
+		uvc_stream_ctrl_t *ctrl) {
+	struct libusb_device_descriptor usb_desc;
+	uvc_frame_desc_t *frame;
+	uvc_format_desc_t *format;
+	uvc_streaming_interface_t *stream_if;
+	const struct libusb_interface *interface;
+	char isochronous;
+
+	/*
+	 * The response of the Elgato Cam Link 4K is incorrect: The second byte
+	 * contains bFormatIndex (instead of being the second byte of bmHint).
+	 */
+	if (libusb_get_device_descriptor(devh->dev->usb_dev, &usb_desc) == 0
+			&& usb_desc.idVendor == 0x0fd9 && usb_desc.idProduct == 0x0066
+			&& ctrl->bmHint > 255) {
+		uint8_t corrected_format_index = ctrl->bmHint >> 8;
+
+		UVC_DEBUG(
+			"Correct USB video probe response from {bmHint: 0x%04x, bFormatIndex: %u} to {bmHint: 0x%04x, bFormatIndex: %u}\n",
+			ctrl->bmHint, ctrl->bFormatIndex,
+			1, corrected_format_index);
+		ctrl->bmHint = 1;
+		ctrl->bFormatIndex = corrected_format_index;
+	}
+
+	frame = uvc_find_frame_desc(devh, ctrl->bFormatIndex, ctrl->bFrameIndex);
+	if (!frame)
+		return;
+	format = frame->parent;
+	if (!format)
+		return;
+
+	if (ctrl->dwMaxVideoFrameSize == 0) {
+		LOGW("fix up block for cameras that fail to set dwMax");
+		ctrl->dwMaxVideoFrameSize = frame->dwMaxVideoFrameBufferSize;
+	}
+
+	if ((ctrl->dwMaxPayloadTransferSize & 0xffff0000) == 0xffff0000)
+		ctrl->dwMaxPayloadTransferSize &= ~0xffff0000;
+
+	stream_if = format->parent;
+	if (!stream_if || !devh->info->config)
+		return;
+
+	interface = &devh->info->config->interface[stream_if->bInterfaceNumber];
+	isochronous = interface->num_altsetting > 1;
+
+	if (!(format->bmFlags & UVC_FMT_FLAG_COMPRESSED) &&
+			devh->quirks & UVC_QUIRK_FIX_BANDWIDTH &&
+			isochronous) {
+		uint32_t interval;
+		uint32_t bandwidth;
+
+		interval = (ctrl->dwFrameInterval > 100000)
+			? ctrl->dwFrameInterval
+			: frame->intervals[0];
+
+		bandwidth = frame->wWidth * frame->wHeight / 8 * format->bBitsPerPixel;
+		bandwidth *= 10000000 / interval + 1;
+		bandwidth /= 1000;
+		if (libusb_get_device_speed(devh->dev->usb_dev) == LIBUSB_SPEED_HIGH)
+			bandwidth /= 8;
+		bandwidth += 12;
+
+		bandwidth = MAX(bandwidth, 1024);
+
+		ctrl->dwMaxPayloadTransferSize = bandwidth;
+	}
+
+#if defined(__ANDROID__) && !defined(LIBUVC_DISABLE_ANDROID_BULK_PAYLOAD_CLAMP)
+	/*
+	 * Some MTK kernels mis-report usbfs caps; clamp bulk payload only when
+	 * UVC_QUIRK_FIX_BANDWIDTH is explicitly enabled for this device handle.
+	 */
+	if ((devh->quirks & UVC_QUIRK_FIX_BANDWIDTH) &&
+			!isochronous && ctrl->dwMaxPayloadTransferSize > 16384u) {
+		UVC_DEBUG("Android: clamp dwMaxPayloadTransferSize %u -> 16384 (bulk/usbfs workaround)\n",
+				(unsigned int) ctrl->dwMaxPayloadTransferSize);
+		ctrl->dwMaxPayloadTransferSize = 16384;
+	}
+#endif
+}
+
 /** @internal
  * Run a streaming control query
  * @param[in] devh UVC device
@@ -269,16 +353,7 @@ uvc_error_t uvc_query_stream_ctrl(uvc_device_handle_t *devh,
 			}
 		}
 
-		/* fix up block for cameras that fail to set dwMax */
-		if (!ctrl->dwMaxVideoFrameSize) {
-			LOGW("fix up block for cameras that fail to set dwMax");
-			uvc_frame_desc_t *frame_desc = uvc_find_frame_desc(devh,
-					ctrl->bFormatIndex, ctrl->bFrameIndex);
-
-			if (frame_desc) {
-				ctrl->dwMaxVideoFrameSize = frame_desc->dwMaxVideoFrameBufferSize;
-			}
-		}
+		uvc_fixup_video_ctrl(devh, ctrl);
 	}
 
 	return UVC_SUCCESS;
@@ -990,7 +1065,6 @@ static void _uvc_stream_callback(struct libusb_transfer *transfer) {
 		// pass through to following lines
 	case LIBUSB_TRANSFER_CANCELLED:
 	case LIBUSB_TRANSFER_ERROR:
-		libusb_clear_halt(strmh->devh->usb_devh, strmh->stream_if->bEndpointAddress);
 		UVC_DEBUG("not retrying transfer, status = %d", transfer->status);
 //		MARK("not retrying transfer, status = %d", transfer->status);
 //		_uvc_delete_transfer(transfer);

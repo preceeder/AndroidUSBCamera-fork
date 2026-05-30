@@ -271,6 +271,8 @@ class MultiCameraClient(ctx: Context, callback: IDeviceConnectCallBack?) {
         protected var isPreviewed: Boolean = false
         protected var isNeedGLESRender: Boolean = false
         protected var mCtrlBlock: USBMonitor.UsbControlBlock? = null
+        /** Index among concurrently opening UVC devices; used for MTK quirks on 2nd+ camera. */
+        protected var mUvcOpenSlot: Int = -1
         protected var mPreviewDataCbList = CopyOnWriteArrayList<IPreviewDataCallBack>()
         private val mCacheEffectList by lazy {
             arrayListOf<AbstractEffect>()
@@ -679,6 +681,7 @@ class MultiCameraClient(ctx: Context, callback: IDeviceConnectCallBack?) {
         fun <T> openCamera(cameraView: T? = null, cameraRequest: CameraRequest? = null) {
             mCameraView = cameraView ?: mCameraView
             mCameraRequest = cameraRequest ?: getDefaultCameraRequest()
+            mUvcOpenSlot = allocateUvcOpenSlot()
             HandlerThread("camera-${System.currentTimeMillis()}").apply {
                 start()
             }.let { thread ->
@@ -914,10 +917,7 @@ class MultiCameraClient(ctx: Context, callback: IDeviceConnectCallBack?) {
         }
 
         private fun captureVideoStopInternal() {
-            // if streaming, cancel it
-            if (! isStreaming()) {
-                captureStreamStopInternal()
-            }
+            captureStreamStopInternal()
             try {
                 mMediaMuxer?.release()
             } catch (e: Exception) {
@@ -1006,5 +1006,59 @@ class MultiCameraClient(ctx: Context, callback: IDeviceConnectCallBack?) {
         private const val DEFAULT_PREVIEW_HEIGHT = 480
         const val MAX_NV21_DATA = 5
         const val CAPTURE_TIMES_OUT_SEC = 3L
+        /** USB hub settle time after close before opening another camera (MTK). */
+        private const val USB_SWITCH_SETTLE_MS = 200L
+
+        private val sUvcOpenSlotCounter = java.util.concurrent.atomic.AtomicInteger(0)
+        /** deviceId of the camera that opens cleanly at slot 0 with quirks=0 (typically HP). */
+        private val sPrimaryCameraDeviceId = java.util.concurrent.atomic.AtomicInteger(-1)
+
+        /**
+         * Resolve libuvc quirks when opening a UVC device.
+         * - Explicit [CameraRequest.uvcQuirks] always wins.
+         * - 2nd+ concurrent open (slot > 0): MTK platform quirks for SP / second-stream devices.
+         * - slot 0 + non-primary device on MTK: platform quirks (HP->SP switch).
+         * - slot 0 + primary device: no quirks.
+         */
+        @JvmStatic
+        fun resolveUvcQuirks(cameraRequest: CameraRequest?, openSlot: Int, deviceId: Int = -1): Int {
+            cameraRequest?.uvcQuirks?.let { return it }
+            if (openSlot > 0) {
+                return UVCCamera.getRecommendedPlatformQuirks()
+            }
+            if (deviceId >= 0) {
+                val primaryId = sPrimaryCameraDeviceId.get()
+                if (primaryId >= 0 && deviceId != primaryId) {
+                    val platformQuirks = UVCCamera.getRecommendedPlatformQuirks()
+                    if (platformQuirks != 0) {
+                        return platformQuirks
+                    }
+                }
+            }
+            return 0
+        }
+
+        /** Mark HP-like camera after a successful slot-0 open with quirks=0. */
+        @JvmStatic
+        fun markPrimaryCameraIfNeeded(deviceId: Int, quirks: Int, openSlot: Int) {
+            if (deviceId >= 0 && openSlot == 0 && quirks == 0) {
+                sPrimaryCameraDeviceId.set(deviceId)
+            }
+        }
+
+        @JvmStatic
+        fun clearPrimaryCameraDevice(deviceId: Int) {
+            if (deviceId >= 0 && sPrimaryCameraDeviceId.get() == deviceId) {
+                sPrimaryCameraDeviceId.set(-1)
+            }
+        }
+
+        @JvmStatic
+        fun allocateUvcOpenSlot(): Int = sUvcOpenSlotCounter.getAndIncrement()
+
+        @JvmStatic
+        fun releaseUvcOpenSlot() {
+            sUvcOpenSlotCounter.updateAndGet { (it - 1).coerceAtLeast(0) }
+        }
     }
 }

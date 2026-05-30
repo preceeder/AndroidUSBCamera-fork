@@ -111,6 +111,7 @@ abstract class CameraActivity: BaseActivity(), ICameraStateCallBack {
             }
 
             override fun onDetachDec(device: UsbDevice?) {
+                device?.deviceId?.let { MultiCameraClient.clearPrimaryCameraDevice(it) }
                 mCameraMap.remove(device?.deviceId)?.apply {
                     setUsbControlBlock(null)
                 }
@@ -928,7 +929,6 @@ abstract class CameraActivity: BaseActivity(), ICameraStateCallBack {
             .setRenderMode(CameraRequest.RenderMode.OPENGL)
             .setDefaultRotateType(RotateType.ANGLE_0)
             .setAudioSource(CameraRequest.AudioSource.SOURCE_SYS_MIC)
-            .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
             .setAspectRatioShow(true)
             .setCaptureRawImage(false)
             .setRawPreviewData(false)

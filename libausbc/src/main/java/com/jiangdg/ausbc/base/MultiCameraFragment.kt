@@ -154,7 +154,7 @@ abstract class MultiCameraFragment: BaseFragment() {
     *  And then you need to call requestPermission(device) in your own Fragment
      * when onAttachDev() called, default is true.
      */
-    protected fun isAutoRequestPermission() = true
+    protected open fun isAutoRequestPermission() = true
 
     /**
      * Request permission

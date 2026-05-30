@@ -25,11 +25,11 @@ package com.jiangdg.uvc;
 
 import android.graphics.SurfaceTexture;
 import android.hardware.usb.UsbDevice;
+import android.os.Build;
 import android.text.TextUtils;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 
-import com.jiangdg.usb.USBMonitor;
 import com.jiangdg.usb.USBMonitor.UsbControlBlock;
 import com.jiangdg.utils.Size;
 import com.jiangdg.utils.XLogWrapper;
@@ -40,18 +40,20 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class UVCCamera {
 	public static boolean DEBUG = false;	// TODO set false when releasing
 	private static final String TAG = UVCCamera.class.getSimpleName();
 	private static final String DEFAULT_USBFS = "/dev/bus/usb";
-	public static final int FRAME_FORMAT_YUYV = 0;
-	public static final int FRAME_FORMAT_MJPEG = 1;
 
+	public static final int DEFAULT_PREVIEW_MODE = 0;
 	public static final int DEFAULT_PREVIEW_MIN_FPS = 1;
 	public static final int DEFAULT_PREVIEW_MAX_FPS = 31;
 	public static final float DEFAULT_BANDWIDTH = 1.0f;
-	public static final int DEFAULT_PREVIEW_MODE = FRAME_FORMAT_MJPEG;
+
+	public static final int FRAME_FORMAT_YUYV = 0;
+	public static final int FRAME_FORMAT_MJPEG = 1;
 
 	public static final int PIXEL_FORMAT_RAW = 0;
 	public static final int PIXEL_FORMAT_YUV = 1;
@@ -59,6 +61,25 @@ public class UVCCamera {
 	public static final int PIXEL_FORMAT_RGBX = 3;
 	public static final int PIXEL_FORMAT_YUV420SP = 4;	// NV12
 	public static final int PIXEL_FORMAT_NV21 = 5;		// = YVU420SemiPlanar,NV21，但是保存到jpg颜色失真
+
+	/**
+	 * Recalculate dwMaxPayloadTransferSize from frame size/rate before stream commit.
+	 * Required on some MediaTek USB host stacks when multiple UVC cameras stream together.
+	 */
+	public static final int UVC_QUIRK_FIX_BANDWIDTH = 0x00000080;
+
+	/**
+	 * libuvc quirks recommended for this device's USB host. MediaTek platforms
+	 * often need {@link #UVC_QUIRK_FIX_BANDWIDTH} for isochronous uncompressed
+	 * video so that {@code dwMaxPayloadTransferSize} is recalculated before commit.
+	 */
+	public static int getRecommendedPlatformQuirks() {
+		final String hw = Build.HARDWARE != null ? Build.HARDWARE.toLowerCase(Locale.US) : "";
+		if (hw.startsWith("mt") || hw.contains("mediatek")) {
+			return UVC_QUIRK_FIX_BANDWIDTH;
+		}
+		return 0;
+	}
 
 	//--------------------------------------------------------------------------------
     public static final int	CTRL_SCANNING		= 0x00000001;	// D0:  Scanning Mode
@@ -186,6 +207,17 @@ public class UVCCamera {
      * @param ctrlBlock
      */
     public synchronized void open(final UsbControlBlock ctrlBlock) {
+    	open(ctrlBlock, 0);
+    }
+
+    /**
+     * connect to a UVC camera with optional libuvc quirks.
+     * Use {@link #UVC_QUIRK_FIX_BANDWIDTH} only when preview fails on MTK multi-camera
+     * or specific bulk/isochronous devices; default 0 keeps legacy camera compatibility.
+     * @param ctrlBlock
+     * @param quirks see {@link #UVC_QUIRK_FIX_BANDWIDTH}
+     */
+    public synchronized void open(final UsbControlBlock ctrlBlock, final int quirks) {
     	int result = -2;
 		StringBuilder sb = new StringBuilder();
 		close();
@@ -196,7 +228,8 @@ public class UVCCamera {
 				mCtrlBlock.getFileDescriptor(),
 				mCtrlBlock.getBusNum(),
 				mCtrlBlock.getDevNum(),
-				getUSBFSName(mCtrlBlock));
+				getUSBFSName(mCtrlBlock),
+				quirks);
 			sb.append("调用nativeConnect返回值："+result);
 //			long id_camera, int venderId, int productId, int fileDescriptor, int busNum, int devAddr, String usbfs
 		} catch (final Exception e) {
@@ -216,13 +249,10 @@ public class UVCCamera {
 					+";busNum="+(mCtrlBlock==null ? "": mCtrlBlock.getBusNum())+";devAddr="+(mCtrlBlock==null ? "": mCtrlBlock.getDevNum())
 					+";usbfs="+(mCtrlBlock==null ? "": getUSBFSName(mCtrlBlock))+"\n"+"Exception："+sb.toString());
 		}
-		mCurrentFrameFormat = FRAME_FORMAT_MJPEG;
+
     	if (mNativePtr != 0 && TextUtils.isEmpty(mSupportedSize)) {
     		mSupportedSize = nativeGetSupportedSize(mNativePtr);
     	}
-    	if (USBMonitor.DEBUG) {
-    		XLogWrapper.i(TAG, "open camera status: " + mNativePtr +", size: " + mSupportedSize);
-		}
     	List<Size> supportedSizes = getSupportedSizeList();
 		if (!supportedSizes.isEmpty()) {
 			mCurrentWidth = supportedSizes.get(0).width;
@@ -356,14 +386,13 @@ public class UVCCamera {
 	}
 
 	public List<Size> getSupportedSizeList() {
-		if (mCurrentFrameFormat < 0) {
-			mCurrentFrameFormat = FRAME_FORMAT_MJPEG;
-		}
-		return getSupportedSize((mCurrentFrameFormat > 0) ? 6 : 4, getSupportedSize());
+		final int type = (mCurrentFrameFormat > 0) ? 6 : 4;
+		return getSupportedSize(type, mSupportedSize);
 	}
 
 	public List<Size> getSupportedSizeList(int frameFormat) {
-		return getSupportedSize((frameFormat > 0) ? 6 : 4, getSupportedSize());
+		final int type = (frameFormat > 0) ? 6 : 4;
+		return getSupportedSize(type, mSupportedSize);
 	}
 
 	public List<Size> getSupportedSize(final int type, final String supportedSize) {
@@ -629,14 +658,6 @@ public class UVCCamera {
     		nativeSetBrightness(mNativePtr, mBrightnessDef);
     	}
     }
-
-	public synchronized int getBrightnessMax() {
-		return mBrightnessMax;
-	}
-
-	public synchronized int getBrightnessMin() {
-		return mBrightnessMin;
-	}
 
 //================================================================================
     /**
@@ -1082,7 +1103,7 @@ public class UVCCamera {
 	private final native long nativeCreate();
 	private final native void nativeDestroy(final long id_camera);
 
-	private final native int nativeConnect(long id_camera, int venderId, int productId, int fileDescriptor, int busNum, int devAddr, String usbfs);
+	private final native int nativeConnect(long id_camera, int venderId, int productId, int fileDescriptor, int busNum, int devAddr, String usbfs, int quirks);
 	private static final native int nativeRelease(final long id_camera);
 
 	private static final native int nativeSetStatusCallback(final long mNativePtr, final IStatusCallback callback);

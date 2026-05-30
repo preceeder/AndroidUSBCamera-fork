@@ -134,7 +134,7 @@ void UVCCamera::clearCameraParams() {
 /**
  * カメラへ接続する
  */
-int UVCCamera::connect(int vid, int pid, int fd, int busnum, int devaddr, const char *usbfs) {
+int UVCCamera::connect(int vid, int pid, int fd, int busnum, int devaddr, const char *usbfs, int quirks) {
 	ENTER();
 	uvc_error_t result = UVC_ERROR_BUSY;
 	if (!mDeviceHandle && fd) {
@@ -163,6 +163,7 @@ int UVCCamera::connect(int vid, int pid, int fd, int busnum, int devaddr, const 
 #if LOCAL_DEBUG
 				uvc_print_diag(mDeviceHandle, stderr);
 #endif
+				mDeviceHandle->quirks = quirks;
 				mFd = fd;
 				mStatusCallback = new UVCStatusCallback(mDeviceHandle);
 				mButtonCallback = new UVCButtonCallback(mDeviceHandle);

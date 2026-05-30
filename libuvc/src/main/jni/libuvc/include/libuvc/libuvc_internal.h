@@ -188,6 +188,13 @@ enum uvc_status_type {
 #define UVC_CONTROL_CAP_AUTOUPDATE (1 << 3)
 #define UVC_CONTROL_CAP_ASYNCHRONOUS (1 << 4)
 
+/* Devices quirks */
+#define UVC_QUIRK_FIX_BANDWIDTH		0x00000080
+
+/* Format flags */
+#define UVC_FMT_FLAG_COMPRESSED		0x00000001
+#define UVC_FMT_FLAG_STREAM		0x00000002
+
 struct uvc_streaming_interface;
 struct uvc_device_info;
 
@@ -247,9 +254,19 @@ typedef struct uvc_device_info {
   We could/should change this to allow reduce it to, say, 5 by default
   and then allow the user to change the number of buffers as required.
  */
+#ifndef LIBUVC_NUM_TRANSFER_BUFS
+#if defined(__ANDROID__)
+/*
+ * Android USB host stacks (notably MediaTek) often fail isochronous streaming
+ * when too many URBs are queued at once: libusb_submit_transfer may return
+ * ENOMEM (errno=12). See https://github.com/libuvc/libuvc/issues/299
+ */
+#define LIBUVC_NUM_TRANSFER_BUFS 8
+#else
 #define LIBUVC_NUM_TRANSFER_BUFS 10
-
-#define LIBUVC_XFER_BUF_SIZE	( 16 * 1024 * 1024 )
+#endif
+#endif
+#define LIBUVC_XFER_BUF_SIZE	( 10 * 1024 * 1024 )
 
 struct uvc_stream_handle {
   struct uvc_device_handle *devh;
@@ -307,6 +324,8 @@ struct uvc_device_handle {
   /** Whether the camera is an iSight that sends one header per frame */
   uint8_t is_isight;
   uint8_t reset_on_release_if;	// XXX whether interface alt setting needs to reset to 0.
+  /** Enable platform/device quirks to resolve specific streaming issues */
+  uint32_t quirks;
 };
 
 /** Context within which we communicate with devices */

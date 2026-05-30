@@ -20,6 +20,7 @@ import android.content.Context
 import android.hardware.usb.UsbDevice
 import android.os.Build
 import android.provider.MediaStore
+import com.jiangdg.ausbc.MultiCameraClient
 import com.jiangdg.ausbc.R
 import com.jiangdg.ausbc.callback.IDeviceConnectCallBack
 import com.jiangdg.ausbc.callback.IPreviewDataCallBack
@@ -129,8 +130,9 @@ class CameraUvcStrategy(ctx: Context) : ICameraStrategy(ctx) {
             val previewWidth = request.previewWidth
             val previewHeight = request.previewHeight
             request.cameraId = device.deviceId.toString()
+            val quirks = MultiCameraClient.resolveUvcQuirks(request, 0, device.deviceId)
             mUVCCamera = UVCCamera().apply {
-                open(ctrlBlock)
+                open(ctrlBlock, quirks)
             }
             if (! isPreviewSizeSupported(previewWidth, previewHeight)) {
                 postCameraStatus(CameraStatus(CameraStatus.ERROR_PREVIEW_SIZE, "unsupported preview size(${request.previewWidth}, ${request.previewHeight})"))
@@ -169,6 +171,7 @@ class CameraUvcStrategy(ctx: Context) : ICameraStrategy(ctx) {
                 }
             }
             mUVCCamera?.setFrameCallback(frameCallBack, UVCCamera.PIXEL_FORMAT_YUV420SP)
+            MultiCameraClient.markPrimaryCameraIfNeeded(device.deviceId, quirks, 0)
             Logger.i(TAG, " createCamera success! request = $request")
         }
         return true

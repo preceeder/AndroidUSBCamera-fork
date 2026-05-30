@@ -10,3 +10,5 @@
 .externalNativeBuild
 .tags*
 .cxx/
+# 勿提交旧版预编译 JNI（会与 ndk-build 产物冲突，导致 nativeConnect JNI 崩溃）
+libuvc/src/main/jniLibs/

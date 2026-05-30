@@ -6,6 +6,7 @@ android {
 	namespace 'com.jiangdg.uvccamera'
 	compileSdkVersion rootProject.ext.versionCompiler
 	buildToolsVersion rootProject.ext.versionBuildTool
+	ndkVersion rootProject.ext.ndkVersion
 
 	compileOptions {
 		sourceCompatibility rootProject.ext.javaSourceCompatibility
@@ -29,42 +30,73 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
         }
     }
+
+	// ndk-build 输出到 src/main/libs；勿使用 src/main/jniLibs 中的旧预编译 .so（会导致 JNI 与 Java 签名不一致）
+	sourceSets {
+		main {
+			jniLibs.srcDirs = ['src/main/libs']
+		}
+	}
 }
 
-tasks.withType(JavaCompile) {
-	compileTask -> compileTask.dependsOn ndkBuild
+tasks.withType(JavaCompile).configureEach {
+	dependsOn ndkBuild
+}
+
+afterEvaluate {
+	tasks.named("preBuild").configure { dependsOn ndkBuild }
+	["Debug", "Release"].each { variant ->
+		def mergeJni = tasks.findByName("merge${variant}JniLibFolders")
+		if (mergeJni != null) {
+			mergeJni.dependsOn ndkBuild
+		}
+	}
+}
+
+String getNdkDir() {
+	def ndkDir = System.getenv("NDK_HOME")
+	if (ndkDir != null && !ndkDir.isEmpty()) {
+		return ndkDir
+	}
+	def localProps = project.rootProject.file('local.properties')
+	Properties properties = new Properties()
+	if (localProps.exists()) {
+		properties.load(localProps.newDataInputStream())
+		ndkDir = properties.getProperty("ndk.dir")
+		if (ndkDir != null && !ndkDir.isEmpty()) {
+			return ndkDir
+		}
+		def sdkDir = properties.getProperty("sdk.dir")
+		if (sdkDir != null && !sdkDir.isEmpty()) {
+			def preferred = new File(sdkDir, "ndk/${rootProject.ext.ndkVersion}")
+			if (new File(preferred, "ndk-build").exists()) {
+				return preferred.absolutePath
+			}
+		}
+	}
+	throw new GradleException("Android NDK not found. Install NDK or set ndk.dir in local.properties")
 }
 
 String getNdkBuildPath() {
-	def ndkBuildingDir = System.getenv("NDK_HOME")
-	if (ndkBuildingDir==null || ndkBuildingDir.isEmpty()) {
-		Properties properties = new Properties()
-		properties.load(project.rootProject.file('local.properties').newDataInputStream())
-		ndkBuildingDir = properties.getProperty("ndk.dir")
-		if (ndkBuildingDir == null || ndkBuildingDir.isEmpty()) {
-			def sdkDir = properties.getProperty("sdk.dir")
-			ndkBuildingDir = "${sdkDir}/ndk/${rootProject.ext.ndkVersion}"
-		}
-	}
-	def ndkBuildPath = ndkBuildingDir
+	def ndkBuildingDir = getNdkDir()
 	if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-		ndkBuildPath = ndkBuildingDir + '/ndk-build.cmd'
-	} else {
-		ndkBuildPath = ndkBuildingDir + '/ndk-build'
+		return ndkBuildingDir + '/ndk-build.cmd'
 	}
-	return ndkBuildPath
+	return ndkBuildingDir + '/ndk-build'
 }
 
 task ndkBuild(type: Exec, description: 'Compile JNI source via NDK') {
-	println('executing ndkBuild')
-	def ndkBuildPath = getNdkBuildPath();
-	commandLine ndkBuildPath, '-j8', '-C', file('src/main').absolutePath
+	doFirst {
+		println('executing ndkBuild')
+	}
+	commandLine getNdkBuildPath(), '-j8', '-C', file('src/main').absolutePath
 }
 
 task ndkClean(type: Exec, description: 'clean JNI libraries') {
-	println('executing ndkBuild clean')
-	def ndkBuildPath = getNdkBuildPath();
-	commandLine ndkBuildPath, 'clean', '-C', file('src/main').absolutePath
+	doFirst {
+		println('executing ndkBuild clean')
+	}
+	commandLine getNdkBuildPath(), 'clean', '-C', file('src/main').absolutePath
 }
 
 clean.dependsOn 'ndkClean'
@@ -73,5 +105,4 @@ dependencies {
     implementation fileTree(dir: new File(buildDir, 'libs'), include: '*.jar')
 	implementation "androidx.appcompat:appcompat:${androidXVersion}"
 	implementation 'com.elvishew:xlog:1.11.0'
-//	implementation project(path: ':libuvccommon')
 }
